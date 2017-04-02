@@ -1,0 +1,998 @@
+#include "led.h"
+#include "delay.h"
+#include "sys.h"
+#include "usart.h"
+#include "includes.h"
+#include "adc.h"
+#include "exti.h"
+#include "stm32f10x_adc.h"
+#include "24cxx.h"
+#include "key.h"
+#include "bee.h"
+#include "motor.h"
+#include "power.h"
+#include "ds1302.h"
+#include "usart3.h"
+#include "stm32f10x_exti.h"
+#include "wkup.h"
+#include "gpio.h"
+#include "RTC_Alarm.h"
+#include "iwdg.h"
+#include "stm32f10x_iwdg.h"
+#include "project.h"
+
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define START_TASK_PRIO		3
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define START_STK_SIZE 		512
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB StartTaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK START_TASK_STK[START_STK_SIZE];
+//ÈÎÎñº¯Êý
+void start_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define CORE_TASK_PRIO		4
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define CORE_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB CORETaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK CORE_TASK_STK[CORE_STK_SIZE];
+void core_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define TIMEOUT_TASK_PRIO		5
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define TIMEOUT_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB TIMEOUTTaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK TIMEOUT_TASK_STK[TIMEOUT_STK_SIZE];
+void timeout_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define ACTIVE_TASK_PRIO		6
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define ACTIVE_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB ACTIVETaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK ACTIVE_TASK_STK[ACTIVE_STK_SIZE];
+void active_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define NEGATIVE_TASK_PRIO		6
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define NEGATIVE_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB NEGATIVETaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK NEGATIVE_TASK_STK[NEGATIVE_STK_SIZE];
+void negative_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define BALANCE_TASK_PRIO		7
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define BALANCE_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB BALANCETaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK BALANCE_TASK_STK[BALANCE_STK_SIZE];
+void balance_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define BLUETOOTH_TASK_PRIO		8
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define BLUETOOTH_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB BLUETOOTHTaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK BLUETOOTH_TASK_STK[BLUETOOTH_STK_SIZE];
+void bluetooth_task(void *p_arg);
+
+//ÈÎÎñÓÅÏÈ¼¶
+#define BATTERY_TASK_PRIO		9
+//ÈÎÎñ¶ÑÕ»´óÐ¡	
+#define BATTERY_STK_SIZE 		128
+//ÈÎÎñ¿ØÖÆ¿é
+OS_TCB BATTERYTaskTCB;
+//ÈÎÎñ¶ÑÕ»	
+CPU_STK BATTERY_TASK_STK[BATTERY_STK_SIZE];
+void battery_task(void *p_arg);
+
+
+////////////////////////////////////////////////////////
+
+#define STRAIN_LEFT 400	//µÚÒ»Ó¦±äÆ¬¿ªÆôµçÑ¹
+#define STRAIN_RIGHT 200	//µÚ¶þÓ¦±äÆ¬¿ªÆôµçÑ¹
+
+#define ACTIVE_TIME seattime //×î³¤¾²×øÊ±¼ä£¬N*1s
+#define NEGETIVE_TIME 45 //ÐÝÃß¹Ø»úÊ±¼ä£¬N*1s
+#define TIMEOUT_TIME 30	//³¬Ê±´¦ÀíÊ±£¬µç»ú×î³¤Õð¶¯Ê±¼ä
+#define SPORT_TIME 15	//×îÉÙÔË¶¯Ê±¼ä
+
+#define EXCELLENT 0
+#define GOOD 1
+#define OK 2
+#define BAD 3
+#define SERIOUS 4
+
+u16 seattime = 1800;	//×î³¤¾²×øÊ±¼ä£¬N*1s
+
+u8 power_flag = 0;	//µçÔ´±êÖ¾Î»
+u8 active_flag = 0;	//Ó¦±äÆ¬¼¤»î±êÖ¾Î»
+u8 negative_flag = 0;	//Ó¦±äÆ¬ÐÝÃß±êÖ¾Î»
+u8 timeout_flag = 0;	//¾²×øÊ±¼ä³¬Ê±±êÖ¾Î»
+u8 sport_flag = 0;	//ÔË¶¯¼ÆÊ±Æ÷±êÖ¾Î»
+u8 strain_on = 0;	//Ñ¹µç´«¸ÐÆ÷±êÖ¾Î»
+u8 bluetooth_on = 0;	//À¶ÑÀÁ¬½Ó±êÖ¾Î» 
+u8 motor_flag = 0;	//Õñ¶¯µç»ú×´Ì¬±êÖ¾Î»
+u8 bee_flag = 0;	//·äÃùÆ÷×´Ì¬±êÖ¾Î»
+u8 lowpower_flag = 0;		//µÍµçÁ¿±êÖ¾Î»
+u8 led_green_flag = 0;	//ÂÌÉ«LEDµÆ×´Ì¬±êÖ¾Î»
+u8 led_red_flag = 0;		//ºìÉ«LEDµÆ×´Ì¬±êÖ¾Î»
+u8 store_hour_flag = 0;	//Ð¡Ê±´¢´æ±êÖ¾
+u8 system_init_flag = 0;	//ÏµÍ³³õÊ¼»¯±êÖ¾Î»
+u8 balance_hour_flag = 0;	//×ø×Ë´¢´æ±êÖ¾
+//u8 time_set_flag = 0;
+
+float tmr_active_correct = 0;	//´¢´æÊý¾Ý¾ÀÕý
+
+u16 balance = 0;
+u16 balance_level = 0;
+u8 posture_store = 0;
+//u8 balance_level[5] = {0};	
+
+////////////////////////////////////////////////////////
+OS_TMR 	tmr_active;		//¼¤»î¶¨Ê±Æ÷
+void tmr_active_callback(void *p_tmr, void *p_arg); 	//¼¤»î¶¨Ê±Æ÷»Øµ÷º¯Êý
+u16 tmr_active_count = 0;
+u16 tmr_active_push = 0;
+u8 tmr_active_timeout = 0;
+
+OS_TMR tmr_negative;	//ÐÝÃß¶¨Ê±Æ÷
+void tmr_negative_callback(void *p_tmr, void *p_arg);	//ÐÝÃß¶¨Ê±Æ÷»Øµ÷º¯Êý
+u8 tmr_negative_count = 0;
+u8 tmr_negative_timeout = 0;
+
+OS_TMR tmr_timeout;	//³¬Ê±¶¨Ê±Æ÷
+void tmr_timeout_callback(void *p_tmr, void *p_arg);	//³¬Ê±¶¨Ê±Æ÷»Øµ÷º¯Êý
+u8 tmr_timeout_count = 0;
+u8 tmr_timeout_timeout = 0;
+
+OS_TMR tmr_sport;	//ÔË¶¯¶¨Ê±Æ÷
+void tmr_sport_callback(void *p_tmr, void *p_arg);	//³¬Ê±¶¨Ê±Æ÷»Øµ÷º¯Êý
+u8 tmr_sport_count = 0;
+u8 tmr_sport_timeout = 0;
+
+OS_TMR tmr_store;	//´¢´æ¶¨Ê±Æ÷
+void tmr_store_callback(void *p_tmr, void *p_arg);	//³¬Ê±¶¨Ê±Æ÷»Øµ÷º¯Êý
+u16 tmr_store_count = 0;
+u8 tmr_store_timeout = 0;
+
+////////////////////////////////////////////////////////
+OS_SEM ActiveSem;		//¼¤»îÐÅºÅÁ¿
+OS_SEM NegativeSem;	//ÐÝÃßÐÅºÅÁ¿
+	
+int main(void)
+{
+	OS_ERR err;
+	CPU_SR_ALLOC();
+	
+	delay_init();       //ÑÓÊ±³õÊ¼»¯
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2); //ÖÐ¶Ï·Ö×éÅäÖÃ
+	uart_init(9600);    //´®¿Ú²¨ÌØÂÊÉèÖÃ
+	uart3_init(9600);		//´®¿Ú3²¨ÌØÂÊÉèÖÃ
+	Gpio_Init();
+	LED_Init();         //LED³õÊ¼»¯
+	Adc_Init();					//ADC³õÊ¼»¯
+	//AT24CXX_Init();			//EEPROM
+	IIC_Off();					//¹Ø±ÕIIC
+	Motor_Init();				//Õñ¶¯µç»ú³õÊ¼»¯
+	Bee_Init();					//·äÃùÆ÷³õÊ¼»¯
+	Power_Init();				//Ó¦±äÆ¬µçÔ´³õÊ¼»¯
+	//DS1302_GPIO_Init();	//DS1302³õÊ¼»¯
+	DS1302_Off();					//¹Ø±ÕDS1302
+	EXTIX_Init();		//Íâ²¿ÖÐ¶Ï³õÊ¼»¯
+	IWDG_Init(IWDG_Prescaler_256,0x0fff);
+	RTC_Alarm_Configuration();
+	
+	OSInit(&err);		//³õÊ¼»¯UCOSIII
+	OS_CRITICAL_ENTER();//½øÈëÁÙ½çÇø
+	//´´½¨¿ªÊ¼ÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&StartTaskTCB,		//ÈÎÎñ¿ØÖÆ¿é
+				 (CPU_CHAR	* )"start task", 		//ÈÎÎñÃû×Ö
+                 (OS_TASK_PTR )start_task, 			//ÈÎÎñº¯Êý
+                 (void		* )0,					//´«µÝ¸øÈÎÎñº¯ÊýµÄ²ÎÊý
+                 (OS_PRIO	  )START_TASK_PRIO,     //ÈÎÎñÓÅÏÈ¼¶
+                 (CPU_STK   * )&START_TASK_STK[0],	//ÈÎÎñ¶ÑÕ»»ùµØÖ·
+                 (CPU_STK_SIZE)START_STK_SIZE/10,	//ÈÎÎñ¶ÑÕ»Éî¶ÈÏÞÎ»
+                 (CPU_STK_SIZE)START_STK_SIZE,		//ÈÎÎñ¶ÑÕ»´óÐ¡
+                 (OS_MSG_QTY  )0,					//ÈÎÎñÄÚ²¿ÏûÏ¢¶ÓÁÐÄÜ¹»½ÓÊÕµÄ×î´óÏûÏ¢ÊýÄ¿,Îª0Ê±½ûÖ¹½ÓÊÕÏûÏ¢
+                 (OS_TICK	  )0,					//µ±Ê¹ÄÜÊ±¼äÆ¬ÂÖ×ªÊ±µÄÊ±¼äÆ¬³¤¶È£¬Îª0Ê±ÎªÄ¬ÈÏ³¤¶È£¬
+                 (void   	* )0,					//ÓÃ»§²¹³äµÄ´æ´¢Çø
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, //ÈÎÎñÑ¡Ïî
+                 (OS_ERR 	* )&err);				//´æ·Å¸Ãº¯Êý´íÎóÊ±µÄ·µ»ØÖµ
+	OS_CRITICAL_EXIT();	//ÍË³öÁÙ½çÇø	 
+	OSStart(&err);  //¿ªÆôUCOSIII
+	while(1);
+}
+
+//¿ªÊ¼ÈÎÎñº¯Êý
+void start_task(void *p_arg)
+{
+	OS_ERR err;
+	CPU_SR_ALLOC();
+	p_arg = p_arg;
+
+	CPU_Init();
+#if OS_CFG_STAT_TASK_EN > 0u
+   OSStatTaskCPUUsageInit(&err);  	//Í³¼ÆÈÎÎñ                
+#endif
+	
+#ifdef CPU_CFG_INT_DIS_MEAS_EN		//Èç¹ûÊ¹ÄÜÁË²âÁ¿ÖÐ¶Ï¹Ø±ÕÊ±¼ä
+    CPU_IntDisMeasMaxCurReset();	
+#endif
+	
+#if	OS_CFG_SCHED_ROUND_ROBIN_EN  //µ±Ê¹ÓÃÊ±¼äÆ¬ÂÖ×ªµÄÊ±ºò
+	 //Ê¹ÄÜÊ±¼äÆ¬ÂÖ×ªµ÷¶È¹¦ÄÜ,Ê±¼äÆ¬³¤¶ÈÎª1¸öÏµÍ³Ê±ÖÓ½ÚÅÄ£¬¼È1*5=5ms
+	OSSchedRoundRobinCfg(DEF_ENABLED,1,&err);  
+#endif		
+	
+		//´´½¨Ó¦±äÆ¬¼¤»î¶¨Ê±Æ÷
+	OSTmrCreate((OS_TMR		*)&tmr_active,		//¼¤»î¶¨Ê±Æ÷
+                (CPU_CHAR	*)"tmr active",		//¶¨Ê±Æ÷Ãû×Ö
+                (OS_TICK	 )0,			//0
+                (OS_TICK	 )100,          //100*10=1000ms
+                (OS_OPT		 )OS_OPT_TMR_PERIODIC, //ÖÜÆÚÄ£Ê½
+                (OS_TMR_CALLBACK_PTR)tmr_active_callback,//¼¤»î¶¨Ê±Æ÷»Øµ÷º¯Êý
+                (void	    *)0,			//²ÎÊýÎª0
+                (OS_ERR	    *)&err);		//·µ»ØµÄ´íÎóÂë
+								
+		//´´½¨Ó¦±äÆ¬ÐÝÃß¶¨Ê±Æ÷
+	OSTmrCreate((OS_TMR		*)&tmr_negative,		//ÐÝÃß¶¨Ê±Æ÷
+                (CPU_CHAR	*)"tmr negative",		//¶¨Ê±Æ÷Ãû×Ö
+                (OS_TICK	 )0,			//0
+                (OS_TICK	 )100,          //100*10=1000ms
+                (OS_OPT		 )OS_OPT_TMR_PERIODIC, //ÖÜÆÚÄ£Ê½
+                (OS_TMR_CALLBACK_PTR)tmr_negative_callback,//ÐÝÃß¶¨Ê±Æ÷»Øµ÷º¯Êý
+                (void	    *)0,			//²ÎÊýÎª0
+                (OS_ERR	    *)&err);		//·µ»ØµÄ´íÎóÂë
+								
+		//´´½¨³¬Ê±¶¨Ê±Æ÷
+	OSTmrCreate((OS_TMR		*)&tmr_timeout,		//³¬Ê±¶¨Ê±Æ÷
+                (CPU_CHAR	*)"tmr timeout",		//¶¨Ê±Æ÷Ãû×Ö
+                (OS_TICK	 )0,			//0
+                (OS_TICK	 )100,          //100*10=1000ms
+                (OS_OPT		 )OS_OPT_TMR_PERIODIC, //ÖÜÆÚÄ£Ê½
+                (OS_TMR_CALLBACK_PTR)tmr_timeout_callback,//ÐÝÃß¶¨Ê±Æ÷»Øµ÷º¯Êý
+                (void	    *)0,			//²ÎÊýÎª0
+                (OS_ERR	    *)&err);		//·µ»ØµÄ´íÎóÂë
+								
+		//´´½¨ÔË¶¯¶¨Ê±Æ÷
+	OSTmrCreate((OS_TMR		*)&tmr_sport,		//ÔË¶¯¶¨Ê±Æ÷
+                (CPU_CHAR	*)"tmr sport",		//¶¨Ê±Æ÷Ãû×Ö
+                (OS_TICK	 )0,			//0
+                (OS_TICK	 )100,          //100*10=1000ms
+                (OS_OPT		 )OS_OPT_TMR_PERIODIC, //ÖÜÆÚÄ£Ê½
+                (OS_TMR_CALLBACK_PTR)tmr_sport_callback,//ÐÝÃß¶¨Ê±Æ÷»Øµ÷º¯Êý
+                (void	    *)0,			//²ÎÊýÎª0
+                (OS_ERR	    *)&err);		//·µ»ØµÄ´íÎóÂë		
+
+		//´´½¨´¢´æ¶¨Ê±Æ÷
+	OSTmrCreate((OS_TMR		*)&tmr_store,		//´¢´æ¶¨Ê±Æ÷
+                (CPU_CHAR	*)"tmr store",		//¶¨Ê±Æ÷Ãû×Ö
+                (OS_TICK	 )0,			//0
+                (OS_TICK	 )100,          //100*10=1000ms
+                (OS_OPT		 )OS_OPT_TMR_PERIODIC, //ÖÜÆÚÄ£Ê½
+                (OS_TMR_CALLBACK_PTR)tmr_store_callback,//ÐÝÃß¶¨Ê±Æ÷»Øµ÷º¯Êý
+                (void	    *)0,			//²ÎÊýÎª0
+                (OS_ERR	    *)&err);		//·µ»ØµÄ´íÎóÂë									
+				
+	OS_CRITICAL_ENTER();	//½øÈëÁÙ½çÇø
+								
+	OSSemCreate ((OS_SEM*)	&ActiveSem,				//´´½¨Ó¦±äÆ¬¼¤»î×´Ì¬ÐÅºÅÁ¿
+                   (CPU_CHAR*) "ActiveSem",
+                   (OS_SEM_CTR)0,
+                   (OS_ERR*)	&err);
+								
+	OSSemCreate ((OS_SEM*)	&NegativeSem,			//´´½¨Ó¦±äÆ¬ÐÝÃß×´Ì¬ÐÅºÅÁ¿
+                   (CPU_CHAR*) "NegativeSem",
+                   (OS_SEM_CTR)0,
+                   (OS_ERR*)	&err);									
+								
+	//´´½¨ÏµÍ³ºËÐÄÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&CORETaskTCB,		
+				 (CPU_CHAR	* )"core task", 		
+                 (OS_TASK_PTR )core_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )CORE_TASK_PRIO,     
+                 (CPU_STK   * )&CORE_TASK_STK[0],	
+                 (CPU_STK_SIZE)CORE_STK_SIZE/10,	
+                 (CPU_STK_SIZE)CORE_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,					
+                 (void   	* )0,					
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
+                 (OS_ERR 	* )&err);
+	
+	//´´½¨³¬Ê±´¦ÀíÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&TIMEOUTTaskTCB,		
+				 (CPU_CHAR	* )"timeout task", 		
+                 (OS_TASK_PTR )timeout_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )TIMEOUT_TASK_PRIO,     
+                 (CPU_STK   * )&TIMEOUT_TASK_STK[0],	
+                 (CPU_STK_SIZE)TIMEOUT_STK_SIZE/10,	
+                 (CPU_STK_SIZE)TIMEOUT_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,					
+                 (void   	* )0,					
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
+                 (OS_ERR 	* )&err);								 
+								 
+	//´´½¨Ó¦±äÆ¬¼¤»îÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&ACTIVETaskTCB,		
+				 (CPU_CHAR	* )"active task", 		
+                 (OS_TASK_PTR )active_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )ACTIVE_TASK_PRIO,     
+                 (CPU_STK   * )&ACTIVE_TASK_STK[0],	
+                 (CPU_STK_SIZE)ACTIVE_STK_SIZE/10,	
+                 (CPU_STK_SIZE)ACTIVE_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )2,					
+                 (void   	* )0,					
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR,
+                 (OS_ERR 	* )&err);		
+						
+	//´´½¨Ó¦±äÆ¬ÐÝÃßÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&NEGATIVETaskTCB,		
+				 (CPU_CHAR	* )"negative task", 		
+                 (OS_TASK_PTR )negative_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )NEGATIVE_TASK_PRIO,     	
+                 (CPU_STK   * )&NEGATIVE_TASK_STK[0],	
+                 (CPU_STK_SIZE)NEGATIVE_STK_SIZE/10,	
+                 (CPU_STK_SIZE)NEGATIVE_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )2,	//2¸öÊ±¼äÆ¬£¬¼È2*5=10ms					
+                 (void   	* )0,				
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, 
+                 (OS_ERR 	* )&err);						
+
+	//´´½¨Æ½ºâ¼ì²âÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&BALANCETaskTCB,		
+				 (CPU_CHAR	* )"balance task", 		
+                 (OS_TASK_PTR )balance_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )BALANCE_TASK_PRIO,     	
+                 (CPU_STK   * )&BALANCE_TASK_STK[0],	
+                 (CPU_STK_SIZE)BALANCE_STK_SIZE/10,	
+                 (CPU_STK_SIZE)BALANCE_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,			
+                 (void   	* )0,				
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, 
+                 (OS_ERR 	* )&err);
+
+	//´´½¨À¶ÑÀÍ¨Ñ¶ÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&BLUETOOTHTaskTCB,		
+				 (CPU_CHAR	* )"bluetooth task", 		
+                 (OS_TASK_PTR )bluetooth_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )BLUETOOTH_TASK_PRIO,     	
+                 (CPU_STK   * )&BLUETOOTH_TASK_STK[0],	
+                 (CPU_STK_SIZE)BLUETOOTH_STK_SIZE/10,	
+                 (CPU_STK_SIZE)BLUETOOTH_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,			
+                 (void   	* )0,				
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, 
+                 (OS_ERR 	* )&err);		
+								 
+	//´´½¨µç³ØµçÁ¿¼ì²âÈÎÎñ
+	OSTaskCreate((OS_TCB 	* )&BATTERYTaskTCB,		
+				 (CPU_CHAR	* )"battery task", 		
+                 (OS_TASK_PTR )battery_task, 			
+                 (void		* )0,					
+                 (OS_PRIO	  )BATTERY_TASK_PRIO,     	
+                 (CPU_STK   * )&BATTERY_TASK_STK[0],	
+                 (CPU_STK_SIZE)BATTERY_STK_SIZE/10,	
+                 (CPU_STK_SIZE)BATTERY_STK_SIZE,		
+                 (OS_MSG_QTY  )0,					
+                 (OS_TICK	  )0,			
+                 (void   	* )0,				
+                 (OS_OPT      )OS_OPT_TASK_STK_CHK|OS_OPT_TASK_STK_CLR, 
+                 (OS_ERR 	* )&err);										 
+				 			 
+	OS_TaskSuspend((OS_TCB*)&StartTaskTCB,&err);		//¹ÒÆð¿ªÊ¼ÈÎÎñ			 
+	OS_CRITICAL_EXIT();	//½øÈëÁÙ½çÇø								 
+}
+
+//ºËÐÄÈÎÎñº¯Êý
+void core_task(void *p_arg)
+{
+
+	u16 adc_left = 0,adc_right = 0, adc_diff = 0;
+	u16 temp = 0,temp_date = 0;
+	float correct_temp = 0;
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1)
+	{
+		if(system_init_flag == 0){																				//ÏµÍ³³õÊ¼»¯
+			if((Get_Adc_Average(ADC_Channel_3,10)) < 869){									//µçÁ¿¹ýµÍ×Ô¶¯¹Ø»ú
+				LED_Red_Blink();
+				
+				Sys_Enter_Shutdown();
+			}
+//			RTC_Off();
+			AT24CXX_Init();							 
+			seattime = (AT24CXX_ReadLenByte(239,2)) * 60;									//¶ÁÈ¡×øÏÂÌáÐÑÊ±¼ä
+			IIC_Off();
+											 
+			ADC_Cmd(ADC1, DISABLE);			//¹Ø±ÕADC1
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, DISABLE);			//¹Ø±Õ´®¿Ú1Í¨µÀÊ±ÖÓ
+			RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, DISABLE); 		//¹Ø±Õ´®¿Ú3Í¨µÀÊ±ÖÓ
+			USART_Cmd(USART1, DISABLE);	//¹Ø±Õ´®¿Ú1
+			USART_Cmd(USART3, DISABLE);	//¹Ø±Õ´®¿Ú3
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1	, DISABLE );	  //¹Ø±ÕADC1Í¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, DISABLE);			//¹Ø±ÕGPIOAÍ¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(	RCC_APB2Periph_GPIOB, DISABLE );		//¹Ø±ÕGPIOBÍ¨µÀÊ±ÖÓ
+			system_init_flag = 1;
+			Sys_Enter_Standby();
+		}
+		
+		if(strain_on == 0 && bluetooth_on == 0){											//ÏµÍ³¿ÕÏÐ×Ô¶¯ÐÝÃß
+			Sys_Enter_Standby();
+		}
+
+		if(strain_on){
+			EXTA15_Off();																								//GPIOA.15	  ¹Ø±ÕA.15Íâ²¿ÖÐ¶Ï			
+			
+			Adc_Init();														//¿ªÆôADC1
+			
+			if(power_flag == OFF){
+				Power_Contrl(POWER_ACTIVE);					//¿ªÆôÓ¦±äÆ¬¼¤ÀøµçÔ´
+				power_flag = ON;
+			}
+			
+			if(lowpower_flag == 0){
+				if(led_green_flag == OFF){					//ÂÌÉ«LEDÉÁË¸
+					LED0_ON();
+					LED0 = ON;
+					led_green_flag = ON;
+				}
+				else{
+					LED0_OFF();
+					led_green_flag = OFF;
+				}
+			}
+			if(store_hour_flag == 0){							//¼ì²âÏµÍ³Ê±¼ä£¬Ã¿Ð¡Ê±¼ÇÂ¼Ò»´ÎÊý¾Ý
+				OSTmrStop (&tmr_store,OS_OPT_TMR_NONE,0,&err);
+				tmr_store_count = 0;
+				DS1302_GPIO_Init();
+				Read_rtc();
+				time_pros();
+				DS1302_Off();
+				if((disp[4] == 59) && (disp[5] == 59)){
+					Posture_Store(posture_store);
+					DS1302_GPIO_Init();
+					Read_rtc();
+					time_pros();
+					DS1302_Off();
+					temp = disp[0] * 559 + disp[1] * 745 + disp[2] * 24 + disp[3];
+					AT24CXX_Init();	
+					AT24CXX_WriteLenByte(241,temp,2);
+					AT24CXX_WriteLenByte(243,balance,2);
+					IIC_Off();
+					balance_hour_flag = 0;			
+					
+					tmr_active_push += tmr_active_count;
+					correct_temp = (float)tmr_active_count / 60.0;
+					temp = tmr_active_count / 60;
+					tmr_active_correct = correct_temp - (float)temp;
+					Data_Store(tmr_active_count / 60);
+					tmr_active_count = 0;
+					OSTmrStart(&tmr_store,&err);
+					store_hour_flag = 1;
+				}
+			}
+			
+			adc_left = Get_Adc_Average(ADC_Channel_1,10);						//»ñÈ¡×ó¶ËµçÑ¹Öµ
+			adc_right = Get_Adc_Average(ADC_Channel_2,10);					//»ñÈ¡ÓÒ¶ËµçÑ¹Öµ
+//			printf("adc left = %d, adc right = %d\n",adc_left,adc_right);
+			if(adc_left - adc_right > 0)
+				adc_diff = adc_left - adc_right;											//»ñÈ¡Á½×éÓ¦±äÆ¬Ö®¼äµÄÊä³öµçÑ¹²î
+			else if(adc_left - adc_right < 0)
+				adc_diff = adc_right - adc_left;
+			else
+				adc_diff = 0;
+			if(balance_hour_flag == 0){															//×ø×Ë¼ì²â
+				DS1302_GPIO_Init();
+				Read_rtc();
+				time_pros();
+				DS1302_Off();
+				temp = AT24CXX_ReadLenByte(241, 2);
+				temp_date = disp[0] * 559 + disp[1] * 745 + disp[2] * 24 + disp[3];
+				if(temp == temp_date){
+					balance = AT24CXX_ReadLenByte(243, 2);
+				}
+				else{
+					balance = adc_diff;
+				}
+				balance_hour_flag = 1;
+			}				
+			balance = (balance + adc_diff) / 2;
+			
+			if(adc_left >= STRAIN_LEFT || adc_right >= STRAIN_RIGHT){
+				OSSemPost (&ActiveSem, OS_OPT_POST_1, &err);	//·¢ËÍ¼¤»îÐÅºÅÁ¿
+//				if(READ_BLU)
+//					printf("adc diff = %d\n",adc_diff);
+				if(balance >= 370){														//×ø×Ë¼ì²â
+					balance_level = balance - 370;
+//				if(READ_BLU)
+//					printf("diff level more than 500 = %d\n\r",balance_level);
+				}
+				else if(balance < 370){												//×ø×Ë¼ì²â
+					balance_level = 370 - balance;
+//				if(READ_BLU)
+//					printf("diff level less than 500 = %d\n\r",adc_diff_level);
+				}
+			}
+			else if(adc_left < STRAIN_LEFT && adc_right < STRAIN_RIGHT){
+				OSSemPost (&NegativeSem, OS_OPT_POST_1, &err);		//·¢ËÍÐÝÃßÐÅºÅÁ¿
+			}
+			
+		}
+		OSTimeDlyHMSM (0,0,1,0,OS_OPT_TIME_PERIODIC,&err);
+	}
+}
+
+void timeout_task(void *p_arg)
+{
+	u16 data_store;
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1){
+		if(tmr_active_timeout){																//¼¤»î¶¨Ê±Æ÷³¬Ê±´¦Àí
+			if(timeout_flag == 0){
+				Motor_Contrl(MOTOR_ACTIVE);												//¿ªÆôµç»ú
+				Bee_Contrl(BEE_ACTIVE);														//¿ªÆô·äÃùÆ÷
+				delay_ms(10);
+				Bee_Contrl(BEE_NEGATIVE);
+				motor_flag = ON;																	//µç»ú±ê¼ÇÎª¿ªÆô×´Ì¬	
+				bee_flag = ON;																		//·äÃùÆ÷±ê¼ÇÎª¿ªÆô×´Ì¬
+				tmr_negative_count = 0;														//ÐÝÃß¼ÆÊýÇåÁã
+				tmr_negative_timeout = 0;													//ÐÝÃß³¬Ê±±ê¼ÇÇåÁã
+				OSTmrStart(&tmr_timeout,&err);										//¿ªÆô³¬Ê±¼ÆÊ±Æ÷
+				OSTmrStop (&tmr_active,OS_OPT_TMR_NONE,0,&err);		//¹Ø±ÕÓ¦±äÆ¬¼¤»î¼ÆÊ±Æ÷
+				
+				data_store = ((u16)(tmr_active_correct + 0.6)) + tmr_active_count / 60;
+				Data_Store(data_store);
+				tmr_active_push = 0;
+				tmr_active_count = 0;															//Ó¦±äÆ¬¼¤»î¼ÆÊ±Æ÷ÇåÁã
+				tmr_active_correct = 0;														//Ê±¼äÐ£×¼±äÁ¿ÇåÁã
+
+				Posture_Store(posture_store);
+				DS1302_GPIO_Init();
+				Read_rtc();
+				time_pros();
+				DS1302_Off();
+				data_store = disp[0] * 559 + disp[1] * 745 + disp[2] * 24 + disp[3];
+				AT24CXX_Init();	
+				AT24CXX_WriteLenByte(241,data_store,2);
+				AT24CXX_WriteLenByte(243,balance,2);
+				IIC_Off();
+				balance_hour_flag = 0;		
+				
+				timeout_flag = 1;																	//³¬Ê±¼ÆÊ±±êÖ¾ÖÃ1
+			}
+			if(negative_flag){																	//µ±ÈËÀë¿ª×øµæ
+				if(motor_flag){
+					Motor_Contrl(MOTOR_NEGATIVE);										//¹Ø±Õµç»ú
+					motor_flag = OFF;																//µç»ú±ê¼ÇÎª¹Ø±Õ×´Ì¬
+//					printf("motor off\n");
+				}
+				if(bee_flag){
+					Bee_Contrl(BEE_NEGATIVE);												//¹Ø±Õ·äÃùÆ÷
+					bee_flag = OFF;
+//					printf("bee off\n");
+				}
+				if(sport_flag == 0){
+					OSTmrStart(&tmr_sport,&err);										//Æô¶¯ÔË¶¯¼ÆÊ±Æ÷
+					sport_flag = 1;
+				}
+			}
+			if(active_flag){																		//µ±ÈËÔÚ×øµæÉÏ
+				if(motor_flag == OFF){
+					Motor_Contrl(MOTOR_ACTIVE);											//Æô¶¯µç»ú
+					motor_flag = ON;
+
+//					printf("motor going again\n");
+				}
+				if(bee_flag == OFF){															//Æô¶¯·äÃùÆ÷
+					bee_flag = ON;
+				}
+				if(bee_flag){
+					Bee_Contrl(BEE_ACTIVE);
+					delay_ms(10);
+					Bee_Contrl(BEE_NEGATIVE);
+				}
+				if(sport_flag){
+					OSTmrStop (&tmr_sport,OS_OPT_TMR_NONE,0,&err);	//¹Ø±ÕÔË¶¯¶¨Ê±Æ÷
+					sport_flag = 0;																	//ÔË¶¯¼ÆÊ±±êÖ¾ÇåÁã
+				}
+			}
+/*			if(tmr_timeout_count >= 10){		
+				if(bee_flag){
+					Bee_Contrl(BEE_NEGATIVE);																						//´óÓÚ10Ãë¹Ø±Õ·äÃùÆ÷
+					bee_flag = OFF;
+					printf("more than 10s, bee off\n");
+				}
+			}*/
+			if(tmr_sport_timeout){															//ÔË¶¯¼ÆÊ±Æ÷¼ÆÊ±Íê±Ï
+//				printf("finish sport, more than 5 mins, motor off\n");
+				Motor_Contrl(MOTOR_NEGATIVE);											//¹Ø±Õµç»ú
+				motor_flag = OFF;
+				Bee_Contrl(BEE_NEGATIVE);													//¹Ø±Õ·äÃùÆ÷
+				bee_flag = OFF;
+
+				OSTmrStop (&tmr_timeout,OS_OPT_TMR_NONE,0,&err);	//¹Ø±Õ³¬Ê±¼ÆÊ±Æ÷
+				tmr_timeout_count = 0;														//³¬Ê±¼ÆÊ±Æ÷¼ÆÊýÇåÁã
+				tmr_timeout_timeout = 0;													//³¬Ê±¼ÆÊ±Æ÷¼ÆÊý³¬Ê±±êÖ¾ÇåÁã
+				timeout_flag = 0;																	//³¬Ê±ÈÎÎñÖ´ÐÐ±êÖ¾
+				OSTmrStop (&tmr_sport,OS_OPT_TMR_NONE,0,&err);		//¹Ø±ÕÔË¶¯¼ÆÊ±Æ÷
+				sport_flag = 0;																		//ÔË¶¯¼ÆÊ±±êÖ¾ÇåÁã
+				tmr_sport_count = 0;															//ÔË¶¯¼ÆÊ±Æ÷¼ÆÊýÇåÁã
+				tmr_sport_timeout = 0;														//ÔË¶¯¼ÆÊ±Æ÷±êÖ¾Î»ÇåÁã
+				
+				active_flag = 0;																	//Ó¦±äÆ¬¼¤»î±êÖ¾Î»ÇåÁã
+				tmr_active_timeout = 0;														//Ó¦±äÆ¬¼¤»î¼ÆÊ±Æ÷¼ÆÊý³¬Ê±±êÖ¾Î»ÇåÁã
+			}
+			if(tmr_timeout_timeout){														//³¬¹ýÒ»¶¨Ê±¼äÎ´ÔË¶¯£¬¹Ø±ÕÌáÐÑ
+//				printf("more than 10 mins, turn off motor\n");
+				Motor_Contrl(MOTOR_NEGATIVE);
+				motor_flag = OFF;
+				Bee_Contrl(BEE_NEGATIVE);																					//¹Ø±Õ·äÃùÆ÷
+				bee_flag = OFF;
+
+				OSTmrStop (&tmr_timeout,OS_OPT_TMR_NONE,0,&err);
+				tmr_timeout_count = 0;
+				timeout_flag = 0;
+				tmr_timeout_timeout = 0;
+				OSTmrStop (&tmr_sport,OS_OPT_TMR_NONE,0,&err);
+				sport_flag = 0;
+				tmr_sport_count = 0;
+				tmr_sport_timeout = 0;
+				
+				active_flag = 0;
+				tmr_active_timeout = 0;
+			}
+		}
+		if(tmr_negative_timeout){
+//			printf("negative timeout\n");
+			Motor_Contrl(MOTOR_NEGATIVE);											//¹Ø±Õµç»ú
+			motor_flag = OFF;
+			Bee_Contrl(BEE_NEGATIVE);													//¹Ø±Õ·äÃùÆ÷
+			bee_flag = OFF;
+			OSTmrStop (&tmr_active,OS_OPT_TMR_NONE,0,&err);
+			OSTmrStop (&tmr_negative,OS_OPT_TMR_NONE,0,&err);
+			
+			if(tmr_active_count + tmr_active_push >= 60){
+				data_store = ((u16)(tmr_active_correct + 0.6)) + tmr_active_count / 60;
+				Data_Store(data_store);
+				tmr_active_push = 0;
+				tmr_active_count = 0;															//Ó¦±äÆ¬¼¤»î¼ÆÊ±Æ÷ÇåÁã
+				tmr_active_correct = 0;
+				store_hour_flag = 0;															//Ð¡Ê±´¢´æ±êÖ¾Î»ÇåÁã
+				
+				Posture_Store(posture_store);
+				DS1302_GPIO_Init();
+				Read_rtc();
+				time_pros();
+				DS1302_Off();
+				data_store = disp[0] * 559 + disp[1] * 745 + disp[2] * 24 + disp[3];
+				AT24CXX_Init();	
+				AT24CXX_WriteLenByte(241,data_store,2);
+				AT24CXX_WriteLenByte(243,balance,2);
+				IIC_Off();
+				balance_hour_flag = 0;	
+			}
+			strain_on = 0;
+			tmr_negative_timeout = 0;
+			tmr_negative_count = 0;
+			LED0_OFF();
+			led_green_flag = OFF;
+			LED1_OFF();
+			led_red_flag = OFF;
+			Power_Contrl(POWER_NEGATIVE);					//¹Ø±ÕÓ¦±äÆ¬µçÔ´
+			power_flag = OFF;
+			negative_flag = 0;
+			
+			ADC_Cmd(ADC1, DISABLE);								//¹Ø±ÕADC
+			USART_Cmd(USART1, DISABLE);						//¹Ø±Õ´®¿Ú1
+			USART_Cmd(USART3, DISABLE);						//¹Ø±Õ´®¿Ú3
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1	, DISABLE );	  //¹Ø±ÕADC1Í¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, DISABLE);			//¹Ø±Õ´®¿Ú1Í¨µÀÊ±ÖÓ
+			RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, DISABLE); 		//¹Ø±Õ´®¿Ú3Í¨µÀÊ±ÖÓ								
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, DISABLE);			//¹Ø±ÕGPIOAÍ¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(	RCC_APB2Periph_GPIOB, DISABLE );		//¹Ø±ÕGPIOBÍ¨µÀÊ±ÖÓ	
+			
+			//GPIOA.15	  ¿ªÆôA.15ÖÐ¶Ï
+			EXTIX_Init();												//¿ªÆôÖÐ¶Ï
+			
+			Sys_Enter_Standby();								//½øÈëÍ£»úÄ£Ê½
+			
+		}
+		OSTimeDlyHMSM (0,0,1,0,OS_OPT_TIME_PERIODIC,&err);
+	}
+}
+
+void active_task(void *p_arg)
+{
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1){
+		OSSemPend (&ActiveSem,0,OS_OPT_PEND_BLOCKING,0,&err);
+//		printf("tmr active going\n");
+		if(active_flag == 0){
+			if(timeout_flag == 0){
+				OSTmrStart(&tmr_active, &err);
+			}
+			OSTmrStop (&tmr_negative,OS_OPT_TMR_NONE,0,&err);
+			tmr_negative_count = 0;
+			active_flag = 1;
+			negative_flag = 0;
+		}
+		OSTimeDlyHMSM(0,0,1,0,OS_OPT_TIME_HMSM_STRICT,&err); //ÑÓÊ±1s
+	}
+}
+
+void negative_task(void *p_arg)
+{
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1){
+		OSSemPend (&NegativeSem,0,OS_OPT_PEND_BLOCKING,0,&err);
+//		printf("tmr_negative going\n");
+		if(negative_flag == 0){
+			OSTmrStop (&tmr_active,OS_OPT_TMR_NONE,0,&err);
+			OSTmrStart(&tmr_negative, &err);
+			negative_flag = 1;
+			active_flag = 0;
+		}
+		OSTimeDlyHMSM(0,0,1,0,OS_OPT_TIME_HMSM_STRICT,&err); //ÑÓÊ±1s
+	}
+}
+
+//Æ½ºâ¼ì²âÈÎÎñ
+void balance_task(void *p_arg)
+{	
+	OS_ERR err;
+//	u8 max,i,balance_name=0;
+	p_arg = p_arg;
+	
+	while(1){
+		if(balance_level <= 40){
+			posture_store &= 0x00;
+			posture_store |= 0x00;
+			//printf("The balance is excellent\n");
+			if(active_flag && tmr_active_timeout == 0){
+				Bee_Contrl(BEE_NEGATIVE);	
+			}
+		}
+		else if(balance_level >40 && balance_level <= 100){
+			posture_store &=  0x00;
+			posture_store |= 0x40;
+			if(active_flag && tmr_active_timeout == 0){
+				Bee_Contrl(BEE_ACTIVE);
+				delay_ms(5);
+				Bee_Contrl(BEE_NEGATIVE);
+			}
+		}	
+		else if(balance_level >100){
+			posture_store &= 0x00;
+			posture_store |= 0x80;
+			if(active_flag && tmr_active_timeout == 0){
+				Bee_Contrl(BEE_ACTIVE);
+				delay_ms(5);
+				Bee_Contrl(BEE_NEGATIVE);
+				delay_ms(50);
+				Bee_Contrl(BEE_ACTIVE);
+				delay_ms(5);
+				Bee_Contrl(BEE_NEGATIVE);
+			}
+		}
+		OSTimeDlyHMSM (0,0,5,0,OS_OPT_TIME_PERIODIC,&err);
+	}
+}
+
+//À¶ÑÀÍ¨Ñ¶ÈÎÎñ
+void bluetooth_task(void *p_arg)
+{
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1){
+		
+		if(bluetooth_on){
+			if(strain_on){
+				if(READ_BLU){
+					usart_scan();
+				}
+				else if(READ_BLU == 0){
+					bluetooth_on = 0;
+				}
+			}
+			else if(strain_on == 0){
+				if(READ_BLU){
+					Adc_Init();		//¿ªÆôADC1
+					usart_scan();
+				}
+				else if(READ_BLU == 0){
+					bluetooth_on = 0;
+					LED1_OFF();
+					led_red_flag = OFF;
+					LED0_OFF();
+					led_green_flag = OFF;
+					
+					ADC_Cmd(ADC1, DISABLE);								//¹Ø±ÕADC
+					USART_Cmd(USART1, DISABLE);						//¹Ø±Õ´®¿Ú1
+					USART_Cmd(USART3, DISABLE);						//¹Ø±Õ´®¿Ú3
+					RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1	, DISABLE );	  //¹Ø±ÕADC1Í¨µÀÊ±ÖÓ
+					RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, DISABLE);			//¹Ø±Õ´®¿Ú1Í¨µÀÊ±ÖÓ
+					RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, DISABLE); 		//¹Ø±Õ´®¿Ú3Í¨µÀÊ±ÖÓ								
+					RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, DISABLE);			//¹Ø±ÕGPIOAÍ¨µÀÊ±ÖÓ
+					RCC_APB2PeriphClockCmd(	RCC_APB2Periph_GPIOB, DISABLE );		//¹Ø±ÕGPIOBÍ¨µÀÊ±ÖÓ	
+					
+					Sys_Enter_Standby();
+				}
+			}
+		}
+		OSTimeDlyHMSM (0,0,1,0,OS_OPT_TIME_HMSM_STRICT,&err);
+	}
+}
+
+//µç³ØµçÁ¿¼ì²âÈÎÎñ
+void battery_task(void *p_arg)
+{
+	u16 battery = 0,data_store = 0;
+	OS_ERR err;
+	p_arg = p_arg;
+	
+	while(1){
+		battery = Get_Adc_Average(ADC_Channel_3,10);
+		if(battery < 869){
+			Motor_Contrl(MOTOR_NEGATIVE);											//¹Ø±Õµç»ú
+			motor_flag = OFF;
+			Bee_Contrl(BEE_NEGATIVE);													//¹Ø±Õ·äÃùÆ÷
+			bee_flag = OFF;
+			OSTmrStop (&tmr_active,OS_OPT_TMR_NONE,0,&err);
+			OSTmrStop (&tmr_negative,OS_OPT_TMR_NONE,0,&err);
+			
+			data_store = ((u16)(tmr_active_correct + 0.6)) + tmr_active_count / 60;
+			Data_Store(data_store);
+			tmr_active_push = 0;
+			tmr_active_count = 0;															//Ó¦±äÆ¬¼¤»î¼ÆÊ±Æ÷ÇåÁã
+			tmr_active_correct = 0;
+			store_hour_flag = 0;															//Ð¡Ê±´¢´æ±êÖ¾Î»ÇåÁã
+			
+			Posture_Store(posture_store);
+			DS1302_GPIO_Init();
+			Read_rtc();
+			time_pros();
+			DS1302_Off();
+			data_store = disp[0] * 559 + disp[1] * 745 + disp[2] * 24 + disp[3];
+			AT24CXX_Init();	
+			AT24CXX_WriteLenByte(241,data_store,2);
+			AT24CXX_WriteLenByte(243,balance,2);
+			IIC_Off();
+			balance_hour_flag = 0;	
+
+			strain_on = 0;
+			tmr_negative_timeout = 0;
+			tmr_negative_count = 0;
+			LED0_OFF();
+			led_green_flag = OFF;
+			LED1_OFF();
+			led_red_flag = OFF;
+			Power_Contrl(POWER_NEGATIVE);					//¹Ø±ÕÓ¦±äÆ¬µçÔ´
+			power_flag = OFF;
+			negative_flag = 0;
+			
+			ADC_Cmd(ADC1, DISABLE);								//¹Ø±ÕADC
+			USART_Cmd(USART1, DISABLE);						//¹Ø±Õ´®¿Ú1
+			USART_Cmd(USART3, DISABLE);						//¹Ø±Õ´®¿Ú3
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1	, DISABLE );	  //¹Ø±ÕADC1Í¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, DISABLE);			//¹Ø±Õ´®¿Ú1Í¨µÀÊ±ÖÓ
+			RCC_APB1PeriphClockCmd(RCC_APB1Periph_USART3, DISABLE); 		//¹Ø±Õ´®¿Ú3Í¨µÀÊ±ÖÓ								
+			RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, DISABLE);			//¹Ø±ÕGPIOAÍ¨µÀÊ±ÖÓ
+			RCC_APB2PeriphClockCmd(	RCC_APB2Periph_GPIOB, DISABLE );		//¹Ø±ÕGPIOBÍ¨µÀÊ±ÖÓ	
+			
+			//GPIOA.15	  ¿ªÆôA.15ÖÐ¶Ï
+			EXTIX_Init();												//¿ªÆôÖÐ¶Ï
+//			RTC_Alarm_Configuration();					//¿ªÆôRTCÄÖÖÓ
+			Sys_Enter_Shutdown();								//½øÈë´ý»úÄ£Ê½
+		}
+		if(battery < 880){
+			lowpower_flag = 1;
+			LED0_OFF();
+			led_green_flag = OFF;
+			if(led_red_flag == OFF){
+				LED1_ON();
+				LED1 = ON;
+				led_red_flag = ON;
+			}
+			else{
+				LED1_OFF();
+				led_red_flag = OFF;
+			}
+		}
+		else{
+			lowpower_flag = 0;
+			LED1_OFF();
+			led_red_flag = OFF;
+		}
+		OSTimeDlyHMSM (0,0,5,0,OS_OPT_TIME_HMSM_STRICT,&err);
+	}
+	
+}
+
+//¼¤»î¶¨Ê±Æ÷µÄ»Øµ÷º¯Êý
+void tmr_active_callback(void *p_tmr, void *p_arg)
+{
+	tmr_active_count++;
+	if((tmr_active_count + tmr_active_push) >= ACTIVE_TIME){
+		tmr_active_timeout = 1;
+	}
+}
+
+//ÐÝÃß¶¨Ê±Æ÷µÄ»Øµ÷º¯Êý
+void tmr_negative_callback(void *p_tmr, void *p_arg)
+{
+	tmr_negative_count++;
+	if(tmr_negative_count >= NEGETIVE_TIME){
+		tmr_negative_timeout = 1;
+		tmr_negative_count = 0;
+	}
+}
+
+//³¬Ê±¶¨Ê±Æ÷»Øµ÷º¯Êý
+void tmr_timeout_callback(void *p_tmr, void *p_arg)
+{
+	tmr_timeout_count++;
+	if(tmr_timeout_count >= TIMEOUT_TIME){
+		tmr_timeout_timeout = 1;
+		tmr_timeout_count = 0;
+	}
+}
+
+//ÔË¶¯¶¨Ê±Æ÷»Øµ÷º¯Êý
+void tmr_sport_callback(void *p_tmr, void *p_arg)
+{
+	tmr_sport_count++;
+	if(tmr_sport_count >= SPORT_TIME){
+		tmr_sport_timeout = 1;
+		tmr_sport_count = 0;
+	}
+}
+
+//Ð¡Ê±´¢´æ¶¨Ê±Æ÷»Øµ÷º¯Êý
+void tmr_store_callback(void *p_tmr, void *p_arg)
+{
+	tmr_store_count++;
+	if(tmr_store_count >= 3595){
+		tmr_store_timeout = 1;
+		tmr_store_count = 0;
+		store_hour_flag = 0;
+	}
+}
